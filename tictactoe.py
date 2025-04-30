@@ -4,6 +4,7 @@ import threading
 import pytesseract
 import pyautogui
 import ctypes
+import win32gui
 from pynput import keyboard
 from pynput.keyboard import Key, Controller
 from playsound import playsound
@@ -18,11 +19,41 @@ paused = False
 should_stop_after_n_presses = 0
 
 
-def get_screen_text(crop_ratio=0.85):
+def get_game_window_rect():
+    hwnd = win32gui.FindWindow(None, GAME_WINDOW_TITLE)
+    if hwnd == 0:
+        print("❌ Game window not found.")
+        return None
+    rect = win32gui.GetWindowRect(hwnd)  # (left, top, right, bottom)
+    return rect
+
+
+def get_top_right_text():
     screen_width, screen_height = pyautogui.size()
     screenshot = pyautogui.screenshot()
-    cropped = screenshot.crop(
-        (0, 0, int(screen_width * crop_ratio), int(screen_height * crop_ratio)))
+
+    # Focus only on top-right area (e.g., 400x150 px)
+    left = screen_width - 400
+    top = 0
+    right = screen_width
+    bottom = 150
+    cropped = screenshot.crop((left, top, right, bottom))
+
+    gray = cropped.convert('L')
+    thresholded = gray.point(lambda x: 0 if x < 180 else 255, mode='1')
+
+    text = pytesseract.image_to_string(thresholded).lower()
+    print("[OCR Debug] Top-Right Text:", text)
+
+    return text
+
+
+def get_screen_text():
+    screen_width, screen_height = pyautogui.size()
+    screenshot = pyautogui.screenshot()
+
+    # Only exclude bottom 200px (full width retained)
+    cropped = screenshot.crop((0, 0, screen_width, screen_height - 200))
     return pytesseract.image_to_string(cropped.convert('L')).lower()
 
 
@@ -34,6 +65,46 @@ def is_game_focused():
     user32.GetWindowTextW(hwnd, buff, length + 1)
     window_title = buff.value
     return GAME_WINDOW_TITLE.lower() in window_title.lower()
+
+
+def detect_added_text():
+    return "added" in get_top_right_text()
+
+
+def detect_received_text():
+    return "received" in get_top_right_text()
+
+
+def detect_mining_result():
+
+    rect = get_game_window_rect()
+    if rect is None:
+        print("❌ Cannot detect mining result without game window.")
+        return False
+
+    left, top, right, bottom = rect
+    width = right - left
+    height = bottom - top
+
+    # Crop to top 25% of game window
+    crop_height = int(height * 0.25)
+
+    screenshot = pyautogui.screenshot(region=(left, top, width, crop_height))
+
+    # Preprocess
+    gray = screenshot.convert('L')
+    resized = gray.resize((gray.width * 2, gray.height * 2))
+    thresholded = resized.point(lambda x: 0 if x < 160 else 255, mode='1')
+
+    # OCR
+    text = pytesseract.image_to_string(thresholded, config='--psm 6').lower()
+
+    # Match
+    if any(word in text for word in ["received", "added", "found"]):
+        print("✅ MATCH: Loot keyword detected!")
+        return True
+
+    return False
 
 
 def detect_question_text():
@@ -89,7 +160,7 @@ def auto_mine():
 
         if mining_active:
             # Delay between mining presses
-            delay = random.uniform(0.25, 0.5)  # (was 0.2-0.4)
+            delay = random.uniform(0.14, 0.17)  # ~5.9 to 7.1 presses/sec
             waited = 0
             chunk = 0.01
             while waited < delay:
@@ -99,31 +170,37 @@ def auto_mine():
                 waited += chunk
 
             if mining_active and not paused:
-                # ✨ New: sometimes skip pressing SPACE
-                if random.random() > 0.03:  # 97% chance to press
+
+                skip_press = random.random() <= 0.03
+                if not skip_press:
                     keyboard_controller.press(Key.space)
-                    hold_time = random.gauss(0.05, 0.015)
-                    hold_time = max(0.03, min(0.08, hold_time))
+                    hold_time = random.gauss(0.066, 0.008)  # avg: 0.066s, std dev: 0.008
+                    hold_time = max(0.045, min(0.085, hold_time))  # realistic range
                     time.sleep(hold_time)
                     keyboard_controller.release(Key.space)
                     print(
                         f"[Mining] Pressed SPACE (held for {hold_time*1000:.0f}ms) after {delay:.2f}s")
-
-                    # ✨ New: very rare accidental double-press
-                    if random.random() < 0.015:  # about 1.5% chance
-                        tiny_delay = random.uniform(
-                            0.05, 0.12)  # small hesitation
-                        time.sleep(tiny_delay)
-                        keyboard_controller.press(Key.space)
-                        # second press even quicker
-                        hold_time = random.gauss(0.045, 0.01)
-                        hold_time = max(0.02, min(0.06, hold_time))
-                        time.sleep(hold_time)
-                        keyboard_controller.release(Key.space)
-                        print(
-                            f"[Mining] (Accidental double press) second tap after {tiny_delay:.2f}s")
                 else:
                     print("[Mining] (Skipped) acted distracted")
+
+                result = detect_mining_result()
+                if result:
+                    print("[Drop] Item or money detected. Stopping mining.\n")
+                    mining_active = False
+                    continue
+
+                # ✨ Rare accidental double press
+                if not skip_press and random.random() < 0.015:
+                    tiny_delay = random.uniform(0.05, 0.12)
+                    time.sleep(tiny_delay)
+                    keyboard_controller.press(Key.space)
+                    hold_time = random.gauss(0.04, 0.007)
+                    hold_time = max(0.025, min(0.055, hold_time))
+
+                    time.sleep(hold_time)
+                    keyboard_controller.release(Key.space)
+                    print(
+                        f"[Mining] (Double tap) second tap after {tiny_delay:.2f}s")
 
                 if should_stop_after_n_presses > 0:
                     should_stop_after_n_presses -= 1
