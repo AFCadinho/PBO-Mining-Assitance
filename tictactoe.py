@@ -87,7 +87,7 @@ def detect_mining_result():
     height = bottom - top
 
     # Crop to top 25% of game window
-    crop_height = int(height * 0.25)
+    crop_height = int(height * 0.15)
 
     screenshot = pyautogui.screenshot(region=(left, top, width, crop_height))
 
@@ -186,7 +186,21 @@ def auto_mine():
                 result = detect_mining_result()
                 if result:
                     print("[Drop] Item or money detected. Stopping mining.\n")
+
+                    # Optional: add 1 or 2 more random "human error" presses after detection
+                    extra_presses = random.choice([0, 1, 2, 0, 0])  # more often 0, sometimes 1–2
+                    for i in range(extra_presses):
+                        tiny_delay = random.uniform(0.05, 0.18)
+                        time.sleep(tiny_delay)
+                        keyboard_controller.press(Key.space)
+                        hold_time = random.gauss(0.04, 0.007)
+                        hold_time = max(0.025, min(0.055, hold_time))
+                        time.sleep(hold_time)
+                        keyboard_controller.release(Key.space)
+                        print(f"[Mining] (Extra tap {i+1}/{extra_presses}) after result detection")
+
                     mining_active = False
+                    threading.Thread(target=playsound, args=("cash_sound.mp3",), daemon=True).start()
                     continue
 
                 # ✨ Rare accidental double press
