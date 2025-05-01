@@ -21,6 +21,7 @@ paused = False
 should_stop_after_n_presses = 0
 skip_one_counter = 0
 
+
 def get_game_window_rect():
     hwnd = win32gui.FindWindow(None, GAME_WINDOW_TITLE)
     if hwnd == 0:
@@ -110,7 +111,7 @@ def detect_received_text():
 
 def detect_mining_result():
     text = get_top_right_text()
-    if any(word in text for word in ["received", "added", "found"]):
+    if any(word in text for word in ["received", "added", "found", "f.", "added", "bag"]):
         print("✅ MATCH: Loot keyword detected!")
         return True
     return False
@@ -168,27 +169,31 @@ def auto_mine():
             continue
 
         if mining_active:
-            # Delay between mining presses
-            delay = random.uniform(0.14, 0.17)  # ~5.9 to 7.1 presses/sec
-            time.sleep(delay)
+            # Total target cycle time for press + hold
+            total_cycle_time = random.uniform(0.1408, 0.1493)
+
+            # Simulated key hold time (spacebar hold)
+            hold_time = random.gauss(0.066, 0.008)
+            # Clamp to realistic range
+            hold_time = max(0.045, min(0.085, hold_time))
+
+            # Remaining time before key press
+            delay_before_press = max(0, total_cycle_time - hold_time)
+            time.sleep(delay_before_press)
 
             if mining_active and not paused:
-
                 skip_press = random.random() <= 0.03
                 if not skip_press:
                     keyboard_controller.press(Key.space)
-                    # avg: 0.066s, std dev: 0.008
-                    hold_time = random.gauss(0.066, 0.008)
-                    # realistic range
-                    hold_time = max(0.045, min(0.085, hold_time))
                     time.sleep(hold_time)
                     keyboard_controller.release(Key.space)
                     print(
-                        f"[Mining] Pressed SPACE (held for {hold_time*1000:.0f}ms) after {delay:.2f}s")
+                        f"[Mining] Pressed SPACE (held for {hold_time*1000:.0f}ms) after {delay_before_press:.2f}s"
+                    )
                 else:
                     print("[Mining] (Skipped) acted distracted")
 
-                if skip_one_counter >= 2:
+                if skip_one_counter >= 4:
                     result = detect_mining_result()
                 else:
                     result = False
@@ -197,16 +202,14 @@ def auto_mine():
                 if result:
                     print("[Drop] Item or money detected. Stopping mining.\n")
 
-                    # Optional: add 1 or 2 more random "human error" presses after detection
-                    # more often 0, sometimes 1–2
                     extra_presses = random.choice([0, 1, 2, 0, 0])
                     for i in range(extra_presses):
                         tiny_delay = random.uniform(0.05, 0.18)
                         time.sleep(tiny_delay)
                         keyboard_controller.press(Key.space)
-                        hold_time = random.gauss(0.04, 0.007)
-                        hold_time = max(0.025, min(0.055, hold_time))
-                        time.sleep(hold_time)
+                        extra_hold = random.gauss(0.04, 0.007)
+                        extra_hold = max(0.025, min(0.055, extra_hold))
+                        time.sleep(extra_hold)
                         keyboard_controller.release(Key.space)
                         print(
                             f"[Mining] (Extra tap {i+1}/{extra_presses}) after result detection")
@@ -216,15 +219,13 @@ def auto_mine():
                         "cash_sound.mp3",), daemon=True).start()
                     continue
 
-                # ✨ Rare accidental double press
                 if not skip_press and random.random() < 0.015:
                     tiny_delay = random.uniform(0.05, 0.12)
                     time.sleep(tiny_delay)
                     keyboard_controller.press(Key.space)
-                    hold_time = random.gauss(0.04, 0.007)
-                    hold_time = max(0.025, min(0.055, hold_time))
-
-                    time.sleep(hold_time)
+                    double_hold = random.gauss(0.04, 0.007)
+                    double_hold = max(0.025, min(0.055, double_hold))
+                    time.sleep(double_hold)
                     keyboard_controller.release(Key.space)
                     print(
                         f"[Mining] (Double tap) second tap after {tiny_delay:.2f}s")
@@ -260,7 +261,6 @@ def on_press(key):
             if mining_active:
                 print("[Movement] Movement detected. Stopping mining immediately.")
                 mining_active = False
-
 
     except AttributeError:
         if key == Key.esc:
